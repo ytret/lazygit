@@ -6,6 +6,7 @@ import (
 	"github.com/jesseduffield/lazygit/pkg/commands/models"
 	"github.com/jesseduffield/lazygit/pkg/commands/oscommands"
 	"github.com/jesseduffield/lazygit/pkg/config"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -15,6 +16,8 @@ func TestFileGetStatusFiles(t *testing.T) {
 		similarityThreshold    int
 		runner                 oscommands.ICmdObjRunner
 		showNumstatInFilesView bool
+		excludeNestedRepos     bool
+		filesystem             afero.Fs
 		expectedFiles          []*models.File
 	}
 
@@ -249,6 +252,35 @@ func TestFileGetStatusFiles(t *testing.T) {
 			},
 		},
 		{
+			testName:            "Nested repo filtered out",
+			similarityThreshold: 50,
+			runner: oscommands.NewFakeRunner(t).
+				ExpectGitArgs([]string{"status", "--untracked-files=yes", "--porcelain", "-z", "--find-renames=50%"},
+					"?? mysubrepo/\x00?? regular_file.txt",
+					nil,
+				),
+			excludeNestedRepos: true,
+			filesystem: func() afero.Fs {
+				fs := afero.NewMemMapFs()
+				_ = fs.MkdirAll("mysubrepo/.git", 0755)
+				return fs
+			}(),
+			expectedFiles: []*models.File{
+				{
+					Path:                    "regular_file.txt",
+					HasStagedChanges:        false,
+					HasUnstagedChanges:      true,
+					Tracked:                 false,
+					Added:                   true,
+					Deleted:                 false,
+					HasMergeConflicts:       false,
+					HasInlineMergeConflicts: false,
+					DisplayString:           "?? regular_file.txt",
+					ShortStatus:             "??",
+				},
+			},
+		},
+		{
 			testName:            "Copied files",
 			similarityThreshold: 50,
 			runner: oscommands.NewFakeRunner(t).
@@ -295,10 +327,19 @@ func TestFileGetStatusFiles(t *testing.T) {
 			userConfig.Gui.ShowNumstatInFilesView = s.showNumstatInFilesView
 			userConfig.Git.RenameSimilarityThreshold = s.similarityThreshold
 
+			deps := commonDeps{
+				appState:   &config.AppState{},
+				userConfig: userConfig,
+			}
+			if s.filesystem != nil {
+				deps.fs = s.filesystem
+				deps.repoPaths = MockRepoPaths(".")
+			}
+
 			loader := &FileLoader{
-				GitCommon:   buildGitCommon(commonDeps{appState: &config.AppState{}, userConfig: userConfig}),
+				GitCommon:   buildGitCommon(deps),
 				cmd:         cmd,
-				config:      &FakeFileLoaderConfig{showUntrackedFiles: "yes"},
+				config:      &FakeFileLoaderConfig{showUntrackedFiles: "yes", excludeNestedRepos: s.excludeNestedRepos},
 				getFileType: func(string) string { return "file" },
 			}
 
@@ -309,8 +350,13 @@ func TestFileGetStatusFiles(t *testing.T) {
 
 type FakeFileLoaderConfig struct {
 	showUntrackedFiles string
+	excludeNestedRepos bool
 }
 
 func (self *FakeFileLoaderConfig) GetShowUntrackedFiles() string {
 	return self.showUntrackedFiles
+}
+
+func (self *FakeFileLoaderConfig) GetExcludeNestedRepos() bool {
+	return self.excludeNestedRepos
 }

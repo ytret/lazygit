@@ -71,6 +71,10 @@ func (self *ConfigCommands) GetShowUntrackedFiles() string {
 	return self.gitConfig.Get("status.showUntrackedFiles")
 }
 
+func (self *ConfigCommands) GetExcludeNestedRepos() bool {
+	return self.UserConfig().Git.ExcludeNestedRepos
+}
+
 // this determines whether the user has configured to push to the remote branch of the same name as the current or not
 func (self *ConfigCommands) GetPushToCurrent() bool {
 	return self.gitConfig.Get("push.default") == "current"
