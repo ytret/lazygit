@@ -45,6 +45,10 @@ var (
 	DiffTerminalColor = style.FgMagenta
 
 	UnstagedChangesColor = style.New()
+
+	SearchMatchFgColor         gocui.Attribute
+	SearchMatchBgColor         gocui.Attribute
+	SearchMatchSelectedBgColor gocui.Attribute
 )
 
 // UpdateTheme updates all theme variables
@@ -73,4 +77,8 @@ func UpdateTheme(themeConfig config.ThemeConfig) {
 
 	DefaultTextColor = GetTextStyle(themeConfig.DefaultFgColor, false)
 	GocuiDefaultTextColor = GetGocuiStyle(themeConfig.DefaultFgColor)
+
+	SearchMatchFgColor = GetGocuiStyle(themeConfig.SearchMatchFgColor)
+	SearchMatchBgColor = GetGocuiStyle(themeConfig.SearchMatchBgColor)
+	SearchMatchSelectedBgColor = GetGocuiStyle(themeConfig.SearchMatchSelectedBgColor)
 }

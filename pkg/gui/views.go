@@ -175,6 +175,9 @@ func (gui *Gui) configureViewProperties() {
 		(*mapping.viewPtr).SelBgColor = theme.GocuiSelectedLineBgColor
 		(*mapping.viewPtr).SelFgColor = gui.g.SelFgColor
 		(*mapping.viewPtr).InactiveViewSelBgColor = theme.GocuiInactiveViewSelectedLineBgColor
+		(*mapping.viewPtr).SearchMatchFgColor = theme.SearchMatchFgColor
+		(*mapping.viewPtr).SearchMatchBgColor = theme.SearchMatchBgColor
+		(*mapping.viewPtr).SearchMatchSelectedBgColor = theme.SearchMatchSelectedBgColor
 	}
 
 	gui.c.SetViewContent(gui.Views.SearchPrefix, gui.c.Tr.SearchPrefix)

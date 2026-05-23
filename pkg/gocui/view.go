@@ -101,6 +101,12 @@ type View struct {
 	// focus.
 	InactiveViewSelBgColor Attribute
 
+	// SearchMatchFgColor, SearchMatchBgColor, and SearchMatchSelectedBgColor
+	// configure the colors of text matching the current search.
+	SearchMatchFgColor         Attribute
+	SearchMatchBgColor         Attribute
+	SearchMatchSelectedBgColor Attribute
+
 	// If Editable is true, keystrokes will be added to the view's internal
 	// buffer at the cursor position.
 	Editable bool
@@ -546,6 +552,7 @@ func NewView(name string, x0, y0, x1, y1 int, mode OutputMode) *View {
 	v.FgColor, v.BgColor = ColorDefault, ColorDefault
 	v.SelFgColor, v.SelBgColor = ColorDefault, ColorDefault
 	v.InactiveViewSelBgColor = ColorDefault
+	v.SearchMatchFgColor, v.SearchMatchBgColor, v.SearchMatchSelectedBgColor = ColorBlack, ColorYellow, ColorCyan
 	v.TitleColor, v.FrameColor = ColorDefault, ColorDefault
 	v.ei.screenColMax = v.InnerWidth()
 	return v
@@ -651,11 +658,11 @@ func (v *View) setCharacter(x, y int, ch string, fgColor, bgColor Attribute) {
 	}
 
 	if matched, selected := v.isPatternMatchedRune(x, y); matched {
-		fgColor = ColorBlack
+		fgColor = v.SearchMatchFgColor
 		if selected {
-			bgColor = ColorCyan
+			bgColor = v.SearchMatchSelectedBgColor
 		} else {
-			bgColor = ColorYellow
+			bgColor = v.SearchMatchBgColor
 		}
 	}
 

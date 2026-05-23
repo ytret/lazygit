@@ -250,6 +250,12 @@ type ThemeConfig struct {
 	MarkedBaseCommitFgColor []string `yaml:"markedBaseCommitFgColor"`
 	// Background color of marked base commit (for rebase)
 	MarkedBaseCommitBgColor []string `yaml:"markedBaseCommitBgColor"`
+	// Foreground color of text for matching content when searching in a view
+	SearchMatchFgColor []string `yaml:"searchMatchFgColor" jsonschema:"minItems=1,uniqueItems=true"`
+	// Background color of text for matching content when searching in a view
+	SearchMatchBgColor []string `yaml:"searchMatchBgColor" jsonschema:"minItems=1,uniqueItems=true"`
+	// Background color of the currently selected search match
+	SearchMatchSelectedBgColor []string `yaml:"searchMatchSelectedBgColor" jsonschema:"minItems=1,uniqueItems=true"`
 	// Color for file with unstaged changes
 	UnstagedChangesColor []string `yaml:"unstagedChangesColor" jsonschema:"minItems=1,uniqueItems=true"`
 	// Default text color
@@ -897,6 +903,9 @@ func GetDefaultConfigForPlatform(platform string) *UserConfig {
 				MarkedBaseCommitBgColor:         []string{"yellow"},
 				MarkedBaseCommitFgColor:         []string{"blue"},
 				UnstagedChangesColor:            []string{"red"},
+				SearchMatchFgColor:              []string{"black"},
+				SearchMatchBgColor:              []string{"yellow"},
+				SearchMatchSelectedBgColor:      []string{"cyan"},
 				DefaultFgColor:                  []string{"default"},
 			},
 			CommitLength:                        CommitLengthConfig{Show: true},
@@ -975,7 +984,7 @@ func GetDefaultConfigForPlatform(platform string) *UserConfig {
 			BranchPrefix:                 "",
 			ParseEmoji:                   false,
 			TruncateCopiedCommitHashesTo: 12,
-			ExcludeNestedRepos:          false,
+			ExcludeNestedRepos:           false,
 		},
 		Worktree: WorktreeConfig{
 			DefaultPath: "",

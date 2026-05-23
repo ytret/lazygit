@@ -219,6 +219,18 @@ gui:
     unstagedChangesColor:
       - red
 
+    # Foreground color of text for matching content when searching in a view
+    searchMatchFgColor:
+      - black
+
+    # Background color of text for matching content when searching in a view
+    searchMatchBgColor:
+      - yellow
+
+    # Background color of the currently selected search match
+    searchMatchSelectedBgColor:
+      - cyan
+
     # Default text color
     defaultFgColor:
       - default
