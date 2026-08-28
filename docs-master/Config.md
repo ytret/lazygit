@@ -215,10 +215,6 @@ gui:
     markedBaseCommitBgColor:
       - yellow
 
-    # Color for file with unstaged changes
-    unstagedChangesColor:
-      - red
-
     # Foreground color of text for matching content when searching in a view
     searchMatchFgColor:
       - black
@@ -230,6 +226,10 @@ gui:
     # Background color of the currently selected search match
     searchMatchSelectedBgColor:
       - cyan
+
+    # Color for file with unstaged changes
+    unstagedChangesColor:
+      - red
 
     # Default text color
     defaultFgColor:

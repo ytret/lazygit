@@ -3782,6 +3782,42 @@
             "yellow"
           ]
         },
+        "searchMatchFgColor": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Foreground color of text for matching content when searching in a view",
+          "default": [
+            "black"
+          ]
+        },
+        "searchMatchBgColor": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Background color of text for matching content when searching in a view",
+          "default": [
+            "yellow"
+          ]
+        },
+        "searchMatchSelectedBgColor": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Background color of the currently selected search match",
+          "default": [
+            "cyan"
+          ]
+        },
         "unstagedChangesColor": {
           "items": {
             "type": "string"
