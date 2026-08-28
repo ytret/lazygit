@@ -522,6 +522,11 @@
           "type": "integer",
           "description": "When copying commit hashes to the clipboard, truncate them to this length. Set to 40 to disable truncation.",
           "default": 12
+        },
+        "excludeNestedRepos": {
+          "type": "boolean",
+          "description": "If true, directories that contain a .git entry (i.e. nested git repositories that are not registered as submodules) will be excluded from the files view. Submodules and linked worktrees are never excluded.",
+          "default": false
         }
       },
       "additionalProperties": false,

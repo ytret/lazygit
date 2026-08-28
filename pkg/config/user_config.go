@@ -364,9 +364,7 @@ type GitConfig struct {
 	RemoteBranchSortOrder string `yaml:"remoteBranchSortOrder" jsonschema:"enum=date,enum=alphabetical"`
 	// When copying commit hashes to the clipboard, truncate them to this length. Set to 40 to disable truncation.
 	TruncateCopiedCommitHashesTo int `yaml:"truncateCopiedCommitHashesTo"`
-	// If true, directories that contain a .git subdirectory (i.e. nested git
-	// repos that are not registered as submodules) will be excluded from the
-	// files view.
+	// If true, directories that contain a .git entry (i.e. nested git repositories that are not registered as submodules) will be excluded from the files view. Submodules and linked worktrees are never excluded.
 	ExcludeNestedRepos bool `yaml:"excludeNestedRepos"`
 }
 

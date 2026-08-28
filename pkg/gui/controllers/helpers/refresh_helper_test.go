@@ -1,6 +1,8 @@
 package helpers
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/jesseduffield/lazygit/pkg/commands/hosting_service"
@@ -8,6 +10,7 @@ import (
 	"github.com/jesseduffield/lazygit/pkg/gui/context/traits"
 	"github.com/jesseduffield/lazygit/pkg/utils"
 	"github.com/samber/lo"
+	"github.com/spf13/afero"
 	"github.com/stefanhaller/git-todo-parser/todo"
 	"github.com/stretchr/testify/assert"
 )
@@ -160,6 +163,96 @@ func TestFindLocalCommitSelectionRange(t *testing.T) {
 	}
 }
 
+func TestExcludeNestedRepos(t *testing.T) {
+	testCases := []struct {
+		name             string
+		files            []*models.File
+		submoduleConfigs []*models.SubmoduleConfig
+		setup            func(t *testing.T, worktreePath string)
+		expected         []string
+	}{
+		{
+			name:  "filters out a nested repo whose .git is a directory",
+			files: []*models.File{{Path: "mysubrepo/"}, {Path: "regular_file.txt"}},
+			setup: func(t *testing.T, worktreePath string) {
+				t.Helper()
+				must(t, os.MkdirAll(filepath.Join(worktreePath, "mysubrepo", ".git"), 0o755))
+			},
+			expected: []string{"regular_file.txt"},
+		},
+		{
+			name:  "filters out a nested repo whose .git is a symlink to a directory",
+			files: []*models.File{{Path: "mysubrepo/"}, {Path: "regular_file.txt"}},
+			setup: func(t *testing.T, worktreePath string) {
+				t.Helper()
+				must(t, os.MkdirAll(filepath.Join(worktreePath, "mysubrepo"), 0o755))
+				must(t, os.MkdirAll(filepath.Join(worktreePath, "real", ".git"), 0o755))
+				must(t, os.Symlink("../real/.git", filepath.Join(worktreePath, "mysubrepo", ".git")))
+			},
+			expected: []string{"regular_file.txt"},
+		},
+		{
+			name:  "filters out a nested repo whose .git is a dangling symlink",
+			files: []*models.File{{Path: "mysubrepo/"}, {Path: "regular_file.txt"}},
+			setup: func(t *testing.T, worktreePath string) {
+				t.Helper()
+				must(t, os.MkdirAll(filepath.Join(worktreePath, "mysubrepo"), 0o755))
+				must(t, os.Symlink("nonexistent", filepath.Join(worktreePath, "mysubrepo", ".git")))
+			},
+			expected: []string{"regular_file.txt"},
+		},
+		{
+			name:             "keeps a submodule whose .git is a file",
+			files:            []*models.File{{Path: "mysubmodule"}, {Path: "regular_file.txt"}},
+			submoduleConfigs: []*models.SubmoduleConfig{{Path: "mysubmodule"}},
+			setup: func(t *testing.T, worktreePath string) {
+				t.Helper()
+				must(t, os.MkdirAll(filepath.Join(worktreePath, "mysubmodule"), 0o755))
+				must(t, os.WriteFile(filepath.Join(worktreePath, "mysubmodule", ".git"), []byte("gitdir: ../.git/modules/mysubmodule\n"), 0o644))
+			},
+			expected: []string{"mysubmodule", "regular_file.txt"},
+		},
+		{
+			name:             "keeps a submodule even when its .git is a directory",
+			files:            []*models.File{{Path: "mysubmodule"}, {Path: "regular_file.txt"}},
+			submoduleConfigs: []*models.SubmoduleConfig{{Path: "mysubmodule"}},
+			setup: func(t *testing.T, worktreePath string) {
+				t.Helper()
+				must(t, os.MkdirAll(filepath.Join(worktreePath, "mysubmodule", ".git"), 0o755))
+			},
+			expected: []string{"mysubmodule", "regular_file.txt"},
+		},
+		{
+			name:  "keeps a linked worktree",
+			files: []*models.File{{Path: "linked-worktree", IsWorktree: true}, {Path: "regular_file.txt"}},
+			setup: func(t *testing.T, worktreePath string) {
+				t.Helper()
+				must(t, os.MkdirAll(filepath.Join(worktreePath, "linked-worktree"), 0o755))
+				must(t, os.WriteFile(filepath.Join(worktreePath, "linked-worktree", ".git"), []byte("gitdir: /path/to/.git/worktrees/linked-worktree\n"), 0o644))
+			},
+			expected: []string{"linked-worktree", "regular_file.txt"},
+		},
+		{
+			name:     "keeps a regular file with no .git entry",
+			files:    []*models.File{{Path: "regular_file.txt"}},
+			expected: []string{"regular_file.txt"},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			worktreePath := t.TempDir()
+			if testCase.setup != nil {
+				testCase.setup(t, worktreePath)
+			}
+
+			files := excludeNestedRepos(testCase.files, testCase.submoduleConfigs, afero.NewOsFs(), worktreePath)
+			actual := lo.Map(files, func(file *models.File, _ int) string { return file.Path })
+			assert.Equal(t, testCase.expected, actual)
+		})
+	}
+}
+
 func TestGetGithubBaseRemote(t *testing.T) {
 	cases := []struct {
 		name             string
@@ -287,4 +380,11 @@ func makeTodoCommit(action todo.TodoCommand) *models.Commit {
 
 func makeTodoCommitWithHash(hash string, action todo.TodoCommand) *models.Commit {
 	return models.NewCommit(&utils.StringPool{}, models.NewCommitOpts{Hash: hash, Action: action})
+}
+
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
 }

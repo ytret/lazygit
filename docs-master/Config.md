@@ -545,6 +545,11 @@ git:
   # to 40 to disable truncation.
   truncateCopiedCommitHashesTo: 12
 
+  # If true, directories that contain a .git entry (i.e. nested git repositories
+  # that are not registered as submodules) will be excluded from the files view.
+  # Submodules and linked worktrees are never excluded.
+  excludeNestedRepos: false
+
 # Config relating to git worktrees
 worktree:
   # Default parent directory for new worktrees. It is offered as a candidate

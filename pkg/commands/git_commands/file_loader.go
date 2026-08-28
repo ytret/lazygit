@@ -13,7 +13,6 @@ import (
 
 type FileLoaderConfig interface {
 	GetShowUntrackedFiles() string
-	GetExcludeNestedRepos() bool
 }
 
 type FileLoader struct {
@@ -110,21 +109,6 @@ func (self *FileLoader) GetStatusFiles(opts GetStatusFileOptions) []*models.File
 				break
 			}
 		}
-	}
-
-	// Filter out nested git repos (directories that contain a .git entry)
-	if self.config.GetExcludeNestedRepos() {
-		wd := self.repoPaths.WorktreePath()
-		filtered := make([]*models.File, 0, len(files))
-		for _, file := range files {
-			path := strings.TrimSuffix(file.Path, "/")
-			_, err := self.Fs.Stat(filepath.Join(wd, path, ".git"))
-			if err == nil {
-				continue
-			}
-			filtered = append(filtered, file)
-		}
-		files = filtered
 	}
 
 	return files

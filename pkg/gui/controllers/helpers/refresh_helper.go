@@ -24,6 +24,7 @@ import (
 	"github.com/jesseduffield/lazygit/pkg/utils"
 	"github.com/samber/lo"
 	"github.com/sasha-s/go-deadlock"
+	"github.com/spf13/afero"
 )
 
 type RefreshHelper struct {
@@ -1344,6 +1345,10 @@ func (self *RefreshHelper) refreshStateFiles(captured capturedFilesState, env re
 			Background:         env.backgroundRoutine,
 		})
 
+	if self.c.UserConfig().Git.ExcludeNestedRepos {
+		files = excludeNestedRepos(files, submoduleConfigs, self.c.Fs, env.git.RepoPaths.WorktreePath())
+	}
+
 	conflictFileCount := 0
 	for _, file := range files {
 		if file.HasMergeConflicts {
@@ -1413,6 +1418,35 @@ func (self *RefreshHelper) refreshStateFiles(captured capturedFilesState, env re
 	})
 
 	return nil
+}
+
+// excludeNestedRepos hides directories that are their own git repositories from
+// the files view. Submodules and linked worktrees are not nested repos, so they
+// stay visible.
+func excludeNestedRepos(files []*models.File, submoduleConfigs []*models.SubmoduleConfig, fs afero.Fs, worktreePath string) []*models.File {
+	return lo.Filter(files, func(file *models.File, _ int) bool {
+		if file.IsSubmodule(submoduleConfigs) || file.IsWorktree {
+			return true
+		}
+
+		path := strings.TrimSuffix(file.Path, "/")
+		// Lstat rather than Stat so that a .git that is a symlink (including a
+		// dangling one, as produced by Google's repo tool) still marks the
+		// directory as a nested repo.
+		return lstatIfPossible(fs, filepath.Join(worktreePath, path, ".git")) != nil
+	})
+}
+
+// lstatIfPossible lstats the given path when the filesystem supports it, and
+// falls back to stat otherwise. We only need to know whether the entry exists,
+// so the boolean reporting which of the two ran is discarded.
+func lstatIfPossible(fs afero.Fs, path string) error {
+	if lstater, ok := fs.(afero.Lstater); ok {
+		_, _, err := lstater.LstatIfPossible(path)
+		return err
+	}
+	_, err := fs.Stat(path)
+	return err
 }
 
 // the reflogs panel is the only panel where we cache data, in that we only
