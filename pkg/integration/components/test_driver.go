@@ -78,6 +78,12 @@ func (self *TestDriver) repeatMouseMove() {
 	self.mouseMove(self.mouseX, self.mouseY)
 }
 
+func (self *TestDriver) scrollWheelDown(x, y int) {
+	self.SetCaption(fmt.Sprintf("Scrolling down at %d, %d", x, y))
+	self.gui.ScrollWheelDown(x, y)
+	self.Wait(self.inputDelay)
+}
+
 func (self *TestDriver) mouseRelease() {
 	self.SetCaption(fmt.Sprintf("Releasing mouse at %d, %d", self.mouseX, self.mouseY))
 	self.gui.MouseRelease(self.mouseX, self.mouseY)
@@ -89,6 +95,24 @@ func (self *TestDriver) mouseRelease() {
 // You probably shouldn't use this function, and should instead go through a view like t.Views().Commit().Focus().Press(...)
 func (self *TestDriver) GlobalPress(key config.Keybinding) {
 	self.press(key[0])
+}
+
+// asserts that the terminal's text cursor is shown, i.e. that there is a text
+// field to type into
+func (self *TestDriver) CursorIsVisible() *TestDriver {
+	self.assertWithRetries(func() (bool, string) {
+		return self.gui.CursorVisible(), "Expected the cursor to be visible"
+	})
+
+	return self
+}
+
+func (self *TestDriver) CursorIsHidden() *TestDriver {
+	self.assertWithRetries(func() (bool, string) {
+		return !self.gui.CursorVisible(), "Expected the cursor to be hidden"
+	})
+
+	return self
 }
 
 // FocusIn simulates the terminal window regaining focus, which causes lazygit
@@ -134,6 +158,15 @@ func (self *TestDriver) LogUI(message string) {
 
 func (self *TestDriver) Log(message string) {
 	self.gui.LogUI(message)
+}
+
+// RefreshInBackground performs the refresh that lazygit's background routines
+// perform on a timer, e.g. to pick up changes made by RunCommand. Tests use this
+// rather than turning those routines on and waiting for them.
+func (self *TestDriver) RefreshInBackground() {
+	self.SetCaption("Refreshing in the background")
+	self.gui.RefreshInBackground()
+	self.Wait(self.inputDelay)
 }
 
 // allows the user to run shell commands during the test to emulate background activity

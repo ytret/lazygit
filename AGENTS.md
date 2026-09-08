@@ -82,11 +82,26 @@ while still being meaningful and self-contained.
   excuse bundling it in. Before committing, review your diff and split out any
   hunk that is behavior-preserving (an extraction, a rename, a move) into a
   preceding commit, by staging hunks or resetting and recommitting in order.
+- **A preparatory refactor is a new commit only when it prepares something
+  new.** Before adding one, find the commit that introduced the code you are
+  about to restructure. If that commit is on this branch, the refactor is a
+  `fixup!` for it rather than a commit of its own: a branch must never contain
+  a commit whose code a later commit on the same branch tidies up. A prep
+  refactor earns a commit of its own only when the shape it corrects came from
+  before the branch. This holds across a branch stack too — if the commit that
+  introduced the code is in an earlier branch of the stack, the fixup belongs
+  there, and the branches above it get replayed. The one exception is when
+  fixing it there turns out to be unreasonably difficult; ask me what to do
+  rather than deciding to leave the repair at the tip.
 - **Do not use conventional commits** (no `feat:`/`fix:`/`chore:` prefixes).
   Match the plain English imperative style of the existing history.
 - **Wrap message body to 72 characters**. The subject is allowed to go up to 80
   characters, or even a little more if needed to convey a good single-line
   summary; the body should be wrapped at 72 exactly, no more, no less.
+- **End every commit message with the `Co-authored-by:` trailer** naming the
+  model that wrote it, exactly as your harness instructions spell it. Nothing
+  in `just check` catches a missing one, so it has to be part of writing the
+  message rather than something to notice afterwards.
 
 ## Iterate with `fixup!` commits
 
@@ -104,6 +119,16 @@ fixup isn't only clean autosquash — it's that the refinement lands as a
 separate, reviewable commit that the user decides when to fold in. A bare
 `--amend` rewrites the commit on the spot and skips that checkpoint. Don't
 treat "I'm only touching the tip commit" as an exception.
+
+**When the tip is the wrong place for a fixup, insert it mid-branch.**
+Committing a fixup at the tip of the branch only works while the code it
+touches still looks the same there; once later commits have rewritten that
+code — or the target has since been split — the fixup won't apply, and
+rewriting the later commits to accommodate it defeats the point. Check out the
+target, make the change, `git commit --fixup=<target>`, then
+`git rebase --onto <the fixup> <target> <branch>` to replay the rest of the
+branch. The fixup stays a separate, reviewable commit; only its position
+changes.
 
 If the changes don't map cleanly onto existing commits — say they cut
 across several of them, or restructure something at a different layer

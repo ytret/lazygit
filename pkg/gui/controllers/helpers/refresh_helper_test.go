@@ -31,8 +31,6 @@ func TestCaptureLocalCommitSelectionRange(t *testing.T) {
 			expected: &localCommitSelectionRange{
 				selectedHash:   "b",
 				rangeStartHash: "a",
-				selectedIdx:    1,
-				rangeStartIdx:  0,
 				mode:           traits.RangeSelectModeSticky,
 			},
 		},
@@ -77,15 +75,12 @@ func TestFindLocalCommitSelectionRange(t *testing.T) {
 	type expectation struct {
 		selectedIdx   int
 		rangeStartIdx int
-		moved         bool
 		found         bool
 	}
 
 	selectionRange := localCommitSelectionRange{
 		selectedHash:   "b",
 		rangeStartHash: "c",
-		selectedIdx:    1,
-		rangeStartIdx:  2,
 		mode:           traits.RangeSelectModeSticky,
 	}
 
@@ -100,7 +95,6 @@ func TestFindLocalCommitSelectionRange(t *testing.T) {
 			expected: expectation{
 				selectedIdx:   2,
 				rangeStartIdx: 3,
-				moved:         true,
 				found:         true,
 			},
 		},
@@ -129,7 +123,6 @@ func TestFindLocalCommitSelectionRange(t *testing.T) {
 			expected: expectation{
 				selectedIdx:   2,
 				rangeStartIdx: 3,
-				moved:         true,
 				found:         true,
 			},
 		},
@@ -142,7 +135,6 @@ func TestFindLocalCommitSelectionRange(t *testing.T) {
 			expected: expectation{
 				selectedIdx:   0,
 				rangeStartIdx: 1,
-				moved:         true,
 				found:         true,
 			},
 		},
@@ -150,11 +142,10 @@ func TestFindLocalCommitSelectionRange(t *testing.T) {
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			selectedIdx, rangeStartIdx, moved, found := findLocalCommitSelectionRange(testCase.commits, &selectionRange)
+			selectedIdx, rangeStartIdx, found := findLocalCommitSelectionRange(testCase.commits, &selectionRange)
 			actual := expectation{
 				selectedIdx:   selectedIdx,
 				rangeStartIdx: rangeStartIdx,
-				moved:         moved,
 				found:         found,
 			}
 
@@ -253,6 +244,62 @@ func TestExcludeNestedRepos(t *testing.T) {
 	}
 }
 
+func TestFindNewConflictedCommit(t *testing.T) {
+	testCases := []struct {
+		name            string
+		previousCommits []*models.Commit
+		commits         []*models.Commit
+		expectedIdx     *int
+	}{
+		{
+			name:            "finds a newly conflicted commit",
+			previousCommits: makeCommits("a", "b"),
+			commits: []*models.Commit{
+				makeCommits("a")[0],
+				makeConflictedCommit("b"),
+			},
+			expectedIdx: lo.ToPtr(1),
+		},
+		{
+			name: "finds a different conflicted commit",
+			previousCommits: []*models.Commit{
+				makeConflictedCommit("a"),
+			},
+			commits: []*models.Commit{
+				makeConflictedCommit("b"),
+			},
+			expectedIdx: lo.ToPtr(0),
+		},
+		{
+			name: "ignores the same conflicted commit",
+			previousCommits: []*models.Commit{
+				makeConflictedCommit("a"),
+			},
+			commits: []*models.Commit{
+				makeConflictedCommit("a"),
+			},
+			expectedIdx: nil,
+		},
+		{
+			name:            "reports not found when there is no conflict",
+			previousCommits: makeCommits("a"),
+			commits:         makeCommits("a", "b"),
+			expectedIdx:     nil,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			idx := findNewConflictedCommit(testCase.previousCommits, testCase.commits)
+
+			assert.Equal(t, testCase.expectedIdx != nil, idx != nil)
+			if idx != nil {
+				assert.Equal(t, *testCase.expectedIdx, *idx)
+			}
+		})
+	}
+}
+
 func TestGetGithubBaseRemote(t *testing.T) {
 	cases := []struct {
 		name             string
@@ -345,6 +392,46 @@ func TestGetAuthenticatedGithubRemotes(t *testing.T) {
 	}, callsByHost)
 }
 
+func TestMarkWorktreeFiles(t *testing.T) {
+	worktreePath := filepath.Join("/", "path", "to", "repo")
+	worktrees := []*models.Worktree{
+		{Path: worktreePath},
+		{Path: filepath.Join(worktreePath, "worktree1")},
+		{Path: filepath.Join(worktreePath, "dir", "worktree2")},
+		{Path: filepath.Join("/", "path", "to", "worktree3")},
+	}
+
+	t.Run("marks the files that are worktrees, and takes their slash off", func(t *testing.T) {
+		files := []*models.File{
+			{Path: "file"},
+			{Path: "worktree1/"},
+			{Path: "dir/worktree2/"},
+			{Path: "dir/"},
+		}
+
+		assert.True(t, markWorktreeFiles(files, worktrees, worktreePath))
+		assert.Equal(t, []*models.File{
+			{Path: "file"},
+			{Path: "worktree1", IsWorktree: true},
+			{Path: "dir/worktree2", IsWorktree: true},
+			{Path: "dir/"},
+		}, files)
+	})
+
+	t.Run("reports no change when there is nothing to mark", func(t *testing.T) {
+		files := []*models.File{{Path: "file"}, {Path: "dir/"}}
+
+		assert.False(t, markWorktreeFiles(files, worktrees, worktreePath))
+	})
+
+	t.Run("unmarks a file whose worktree is gone", func(t *testing.T) {
+		files := []*models.File{{Path: "worktree1", IsWorktree: true}}
+
+		assert.True(t, markWorktreeFiles(files, nil, worktreePath))
+		assert.Equal(t, []*models.File{{Path: "worktree1"}}, files)
+	})
+}
+
 func makeGithubRemoteInfoList(names ...string) []githubRemoteInfo {
 	return lo.Map(names, func(name string, _ int) githubRemoteInfo {
 		return makeGithubRemoteInfo(name, name)
@@ -387,4 +474,8 @@ func must(t *testing.T, err error) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func makeConflictedCommit(hash string) *models.Commit {
+	return models.NewCommit(&utils.StringPool{}, models.NewCommitOpts{Hash: hash, Status: models.StatusConflicted})
 }

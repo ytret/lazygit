@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -61,21 +63,57 @@ type ViewBufferManager struct {
 	writer io.Writer
 
 	waitingMutex deadlock.Mutex
-	taskIDMutex  deadlock.Mutex
-	Log          *logrus.Entry
-	newTaskID    int
-	// The channel by which the currently-running task is told to read more
-	// lines (e.g. as the user scrolls). Held in an atomic because it's swapped
-	// out as tasks come and go while ReadLines/ReadToEnd read it from the UI
-	// thread; nil when no task is running.
-	readLines atomic.Pointer[chan LinesToRead]
-	taskKey   string
-	onNewKey  func()
+	// Guards newTaskID and taskKey, which identify the most recently requested
+	// task. Both are written on the goroutine NewTask spawns, and taskKey is
+	// read from the UI thread (GetTaskKey), so neither may be touched without
+	// holding this.
+	taskIDMutex deadlock.Mutex
+	Log         *logrus.Entry
+	newTaskID   int
+	// The requests by which the currently-running task is told to read more lines
+	// (e.g. as the user scrolls), and which it answers once it has. The task
+	// serving them comes and goes; see readRequestQueue.
+	readRequests *readRequestQueue
+	taskKey      string
+
+	// Resets the view's scroll position to the top. A render whose content is
+	// different from what the view last showed (a different command key) calls
+	// this — but at its *first paint*, not when the task starts: the off-screen
+	// render leaves the previous content displayed until the swap, so resetting
+	// the origin up front would scroll that still-displayed content to the top
+	// before the new content replaces it. See newContentPending.
+	resetOrigin func()
+
+	// Whether the content the running task is rendering differs from what the
+	// view is currently showing (i.e. the command key changed). Two things key
+	// off it: the loading indicator only takes the view over when it is set,
+	// since there is no point clearing content we are about to render
+	// identically; and the first paint that reveals the content resets the
+	// scroll to the top and clears it.
+	//
+	// It deliberately outlives the task that set it: a task can be stopped and
+	// replaced before it ever paints — a background refresh landing just after
+	// the user clicked a different item, say — and the replacement, which
+	// renders the same content and so sets nothing of its own, still has to do
+	// what that task was owed.
+	newContentPending atomic.Bool
+
+	// Whether a command task is currently reading content into the view. While
+	// this is true the content is still growing, so callers (e.g. the layout)
+	// must not clamp the view's scroll position to the amount loaded so far.
+	loading atomic.Bool
 
 	// beforeStart is the function that is called before starting a new task
 	beforeStart  func()
 	refreshView  func()
 	onEndOfInput func()
+
+	// beginRender starts an off-screen render: the new content is built without
+	// disturbing what's displayed. swapInRender then promotes it to the display
+	// in one step. Together they keep the view showing the previous render until
+	// the new one has read enough to paint, instead of revealing it line by line.
+	beginRender  func()
+	swapInRender func()
 
 	// see docs/dev/Busy.md
 	// A gocui task is not the same thing as the tasks defined in this file.
@@ -115,6 +153,9 @@ type LinesToRead struct {
 }
 
 func (self *ViewBufferManager) GetTaskKey() string {
+	self.taskIDMutex.Lock()
+	defer self.taskIDMutex.Unlock()
+
 	return self.taskKey
 }
 
@@ -124,17 +165,22 @@ func NewViewBufferManager(
 	beforeStart func(),
 	refreshView func(),
 	onEndOfInput func(),
-	onNewKey func(),
+	resetOrigin func(),
+	beginRender func(),
+	swapInRender func(),
 	newGocuiTask func() gocui.Task,
 	onUIThread func(f func()) error,
 ) *ViewBufferManager {
 	return &ViewBufferManager{
+		readRequests: newReadRequestQueue(),
 		Log:          log,
 		writer:       writer,
 		beforeStart:  beforeStart,
 		refreshView:  refreshView,
 		onEndOfInput: onEndOfInput,
-		onNewKey:     onNewKey,
+		resetOrigin:  resetOrigin,
+		beginRender:  beginRender,
+		swapInRender: swapInRender,
 		newGocuiTask: newGocuiTask,
 		onUIThread:   onUIThread,
 	}
@@ -145,22 +191,52 @@ func NewViewBufferManager(
 // (e.g. as the user scrolls down, back up, and down again) don't re-read lines
 // that have already been read: the task only ever reads the shortfall.
 func (self *ViewBufferManager) ReadLines(totalLines int) {
-	if ch := self.readLines.Load(); ch != nil {
-		readLines := *ch
-		go utils.Safe(func() {
-			readLines <- LinesToRead{Total: totalLines, InitialRefreshAfter: -1}
-		})
-	}
+	// A request with no Then needs no answer, so there is nothing to do when no
+	// task is there to take it.
+	self.readRequests.enqueue(LinesToRead{Total: totalLines, InitialRefreshAfter: -1})
+}
+
+// IsLoading reports whether a command task is currently reading content into the
+// view, meaning the content is still growing.
+func (self *ViewBufferManager) IsLoading() bool {
+	return self.loading.Load()
+}
+
+// StartLoading marks the view as loading content. It must be called
+// synchronously when a command/pty task is started, before the task's goroutine
+// runs, so that a layout pass happening in between doesn't clamp the scroll
+// position to the not-yet-loaded content. It is cleared when the task reaches
+// the end of its input.
+func (self *ViewBufferManager) StartLoading() {
+	self.loading.Store(true)
 }
 
 func (self *ViewBufferManager) ReadToEnd(then func()) {
-	if ch := self.readLines.Load(); ch != nil {
-		readLines := *ch
-		go utils.Safe(func() {
-			readLines <- LinesToRead{Total: -1, InitialRefreshAfter: -1, Then: then}
-		})
-	} else if then != nil {
-		then()
+	// The reading happens on the task's own goroutine, and the caller hears about
+	// it through then, so lazygit must not count as idle in between.
+	task := self.newGocuiTask()
+	answered := func() {
+		task.Done()
+		if then != nil {
+			then()
+		}
+	}
+
+	request := LinesToRead{Total: -1, InitialRefreshAfter: -1, Then: answered}
+	if !self.readRequests.enqueue(request) {
+		// With no task reading, everything there is to read has been read.
+		answered()
+	}
+}
+
+// stopServingReadRequests takes the task away from the read-request queue and
+// answers whatever it never got to, so that nobody is left waiting for a callback
+// that isn't coming.
+func (self *ViewBufferManager) stopServingReadRequests() {
+	for _, request := range self.readRequests.stopServing() {
+		if request.Then != nil {
+			request.Then()
+		}
 	}
 }
 
@@ -228,8 +304,9 @@ func (self *ViewBufferManager) NewCmdTask(start func() (Cmd, io.Reader), prefix 
 
 		loadingMutex := deadlock.Mutex{}
 
-		readLines := make(chan LinesToRead, 1024)
-		self.readLines.Store(&readLines)
+		// Begin serving before any goroutine starts, so that the first request below
+		// can't arrive before there is a task to take it.
+		readRequests := self.readRequests.beginServing()
 
 		scanner := bufio.NewScanner(r)
 		scanner.Split(utils.ScanLinesAndTruncateWhenLongerThanBuffer(bufio.MaxScanTokenSize))
@@ -271,8 +348,21 @@ func (self *ViewBufferManager) NewCmdTask(start func() (Cmd, io.Reader), prefix 
 				return
 			case <-ticker.C:
 				loadingMutex.Lock()
-				if !loaded {
+				// Only take the view over to say "loading..." when the content coming
+				// is different from what's on screen. A re-render of the same content
+				// leaves the view showing exactly what it should already, so clearing
+				// it for the message and then rendering the same thing back is a
+				// visible flicker for nothing — and a slow re-render of unchanged
+				// content is common (a background refresh over a repo with submodules
+				// that have uncommitted changes, say). The pending flag isn't consumed
+				// here; the first paint still owes the scroll reset.
+				if !loaded && self.newContentPending.Load() {
 					self.beforeStart()
+					// beforeStart cleared the previous content to show "loading...", so
+					// put the view back at the top for it (beforeStart doesn't touch the
+					// origin). The origin is view state the UI thread reads while laying
+					// out, so write it there.
+					_ = self.onUIThread(self.resetOrigin)
 					_, _ = self.writer.Write([]byte("loading..."))
 					self.refreshView()
 				}
@@ -297,8 +387,9 @@ func (self *ViewBufferManager) NewCmdTask(start func() (Cmd, io.Reader), prefix 
 			// closed the selects below could still service a ready data channel
 			// instead of bailing. Check stop explicitly first to give it priority:
 			// a task that's been stopped (it's being replaced by a newer one) must
-			// not touch the view here — beforeStart clears it and the prefix gets
-			// written, clobbering what the incoming task is about to render.
+			// not touch the view here — it would start an off-screen render and
+			// write the prefix into it, clobbering what the incoming task is about
+			// to render.
 			stopped := func() bool {
 				select {
 				case <-opts.Stop:
@@ -313,15 +404,52 @@ func (self *ViewBufferManager) NewCmdTask(start func() (Cmd, io.Reader), prefix 
 			// this to work out how many more lines, if any, we still need to read.
 			linesRead := 0
 
+			// The first paint swaps the off-screen render in to reveal the new
+			// content, and settles the scroll position in the same step — so the new
+			// content first appears already where it belongs, and no draw can land
+			// between the two and show it at the previous render's scroll. It happens
+			// once, either when we've read far enough (below) or at end of input for
+			// content shorter than that. Callers run it on the UI thread: it writes
+			// the view's origin.
+			painted := false
+			firstPaint := func() {
+				if painted {
+					return
+				}
+				painted = true
+				self.swapInRender()
+				if self.newContentPending.Swap(false) {
+					self.resetOrigin()
+				}
+			}
+
+			// Set LAZYGIT_SLOW_RENDER=<milliseconds> to sleep that long after each
+			// line is written to the view, stretching async loads out so the frames
+			// of a re-render become visible. Useful for debugging scroll/flicker
+			// behaviour; has no effect when the variable is unset.
+			var slowRenderPerLine time.Duration
+			if v := os.Getenv("LAZYGIT_SLOW_RENDER"); v != "" {
+				if ms, err := strconv.Atoi(v); err == nil {
+					slowRenderPerLine = time.Duration(ms) * time.Millisecond
+				}
+			}
+
 		outer:
 			for {
 				if stopped() {
 					break outer
 				}
-				select {
-				case <-opts.Stop:
-					break outer
-				case linesToRead := <-readLines:
+				linesToRead, ok := self.readRequests.dequeue()
+				if !ok {
+					// Nothing to read yet: wait to be told there is, or to be stopped.
+					select {
+					case <-opts.Stop:
+						break outer
+					case <-readRequests:
+					}
+					continue
+				}
+				{
 					callThen := func() {
 						if linesToRead.Then != nil {
 							linesToRead.Then()
@@ -344,7 +472,10 @@ func (self *ViewBufferManager) NewCmdTask(start func() (Cmd, io.Reader), prefix 
 
 						loadingMutex.Lock()
 						if !loaded {
-							self.beforeStart()
+							// Build the new content off-screen, leaving the previous render
+							// displayed until we swap in below; this is what keeps an async
+							// re-render from showing a half-loaded buffer.
+							self.beginRender()
 							if prefix != "" {
 								writeToView([]byte(prefix))
 							}
@@ -353,12 +484,37 @@ func (self *ViewBufferManager) NewCmdTask(start func() (Cmd, io.Reader), prefix 
 						loadingMutex.Unlock()
 
 						if !ok {
-							// if we're here then there's nothing left to scan from the source
-							// so we're at the EOF and can flush the stale content.
-							// onEndOfInput reads the view's dimensions (to decide
-							// whether to scroll) and sets the origin, both of which
-							// are UI-thread-only, so run it there.
-							_ = self.onUIThread(self.onEndOfInput)
+							// lineChan is closed. At a genuine end of input we swap in what we
+							// read and finalize. But lineChan is also closed when this task has
+							// been stopped to make way for a newer one: stopping closes
+							// opts.Stop, and the scanner goroutine then closes lineChan, so the
+							// select above can land here instead of on the opts.Stop case. A
+							// stopped task is being replaced and must leave the view to the
+							// incoming task — swapping in its half-read buffer, clamping the
+							// origin, or clearing `loading` would all corrupt what that task is
+							// about to render. So bail out here, the same as the explicit stop
+							// case above.
+							select {
+							case <-opts.Stop:
+								callThen()
+								break outer
+							default:
+							}
+							// Genuine end of input: do the first paint now if it hasn't happened
+							// yet (the content was shorter than a screenful, so we never reached
+							// the point below), and flush the stale content. onEndOfInput reads
+							// the view's dimensions (to decide whether to scroll) and sets the
+							// origin, both of which are UI-thread-only, so run it there — as is
+							// firstPaint, which also writes the origin.
+							_ = self.onUIThread(func() {
+								firstPaint()
+								self.onEndOfInput()
+							})
+							// The content is fully loaded now, so it's safe again for the
+							// layout to clamp the scroll position to it. We deliberately
+							// don't clear this when stopped (rather than EOF'd), because that
+							// means a newer task is taking over and is still loading.
+							self.loading.Store(false)
 							callThen()
 							break outer
 						}
@@ -366,10 +522,15 @@ func (self *ViewBufferManager) NewCmdTask(start func() (Cmd, io.Reader), prefix 
 						lineWrittenChan <- struct{}{}
 						linesRead++
 
+						if slowRenderPerLine > 0 {
+							time.Sleep(slowRenderPerLine)
+						}
+
 						if linesRead == linesToRead.InitialRefreshAfter {
-							// We have read enough lines to fill the view, so do a first refresh
-							// here to show what we have. Continue reading and refresh again at
-							// the end to make sure the scrollbar has the right size.
+							// We have read enough lines to fill the view, so do the first paint
+							// and refresh to show it. Continue reading and refresh again at the
+							// end to make sure the scrollbar has the right size.
+							_ = self.onUIThread(firstPaint)
 							refreshViewIfStale()
 						}
 					}
@@ -379,7 +540,11 @@ func (self *ViewBufferManager) NewCmdTask(start func() (Cmd, io.Reader), prefix 
 				}
 			}
 
-			self.readLines.Store(nil)
+			// Whoever made a request the loop never got to is waiting to hear that the
+			// content it asked for has been read, and there is nothing here to read it
+			// any more: at end of input it has all been read already, and a task that
+			// was stopped is handing the view over to the one replacing it.
+			self.stopServingReadRequests()
 
 			refreshViewIfStale()
 
@@ -403,7 +568,7 @@ func (self *ViewBufferManager) NewCmdTask(start func() (Cmd, io.Reader), prefix 
 			close(lineWrittenChan)
 		})
 
-		readLines <- linesToRead
+		self.readRequests.enqueue(linesToRead)
 
 		<-done
 
@@ -488,19 +653,18 @@ func (self *ViewBufferManager) NewTask(f func(TaskOpts) error, key string) error
 			return
 		}
 
-		resetOrigin := self.GetTaskKey() != key && self.onNewKey != nil
+		// Note we don't reset the origin here even when the command key changed:
+		// that's deferred to the first paint that reveals the new content (see
+		// newContentPending), so the previous content — left displayed until the
+		// swap — doesn't visibly jump to the top before the new content appears.
+		// Read taskKey directly: we already hold the mutex that guards it, and
+		// GetTaskKey would take it again.
+		if self.taskKey != key && self.resetOrigin != nil {
+			self.newContentPending.Store(true)
+		}
 		self.taskKey = key
 
 		self.taskIDMutex.Unlock()
-
-		if resetOrigin {
-			// onNewKey resets the view's scroll origin, which is view state the
-			// UI thread reads while laying out and drawing, so do it there. This
-			// must happen after releasing taskIDMutex: it blocks until the UI
-			// thread runs it, and a NewTask call on the UI thread takes
-			// taskIDMutex, so holding it here would deadlock.
-			_ = self.onUIThread(self.onNewKey)
-		}
 
 		self.waitingMutex.Lock()
 
@@ -518,7 +682,8 @@ func (self *ViewBufferManager) NewTask(f func(TaskOpts) error, key string) error
 			self.stopCurrentTask()
 		}
 
-		self.readLines.Store(nil)
+		// Nothing serves read requests between one task and the next.
+		self.stopServingReadRequests()
 
 		stop := make(chan struct{})
 		notifyStopped := make(chan struct{})

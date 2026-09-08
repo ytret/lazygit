@@ -31,6 +31,9 @@ type GuiDriver interface {
 	ClickAndHold(int, int)
 	MouseMove(int, int)
 	MouseRelease(int, int)
+	ScrollWheelDown(int, int)
+	// Perform the refresh that a background routine would perform on a timer
+	RefreshInBackground()
 	// Can be used to avoid data races with the UI thread in the uncommon cases that
 	// the test driver needs to assert state while the gui is not idle.
 	OnUIThreadAndWait(func())
@@ -42,6 +45,8 @@ type GuiDriver interface {
 	FocusInAndClick(int, int)
 	Keys() config.KeybindingConfig
 	CurrentContext() types.Context
+	// Whether the terminal's text cursor is currently shown
+	CursorVisible() bool
 	ContextForView(viewName string) types.Context
 	Fail(message string)
 	// These two log methods are for the sake of debugging while testing. There's no need to actually

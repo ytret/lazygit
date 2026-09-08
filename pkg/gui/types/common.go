@@ -48,8 +48,12 @@ type IGuiCommon interface {
 	RefreshFromWorker(RefreshOptions)
 	// we call this when we've changed something in the view model but not the actual model,
 	// e.g. expanding or collapsing a folder in a file view. Calling 'Refresh' in this
-	// case would be overkill, although refresh will internally call 'PostRefreshUpdate'
+	// case would be overkill, although refresh will internally call 'PostRefreshUpdate'.
+	// It re-focuses the context's selection, which scrolls it into view.
 	PostRefreshUpdate(Context)
+	// Like PostRefreshUpdate, with control over scrolling and whether to update
+	// the main view.
+	PostRefreshUpdateWithOptions(Context, OnFocusOpts)
 
 	// renders string to a view without resetting its origin
 	SetViewContent(view *gocui.View, content string)
@@ -141,7 +145,7 @@ type IGuiCommon interface {
 	KeybindingsOpts() KeybindingsOpts
 	CallKeybindingHandler(binding *Binding) error
 
-	ResetKeybindings() error
+	ResetKeybindings()
 
 	// hopefully we can remove this once we've moved all our keybinding stuff out of the gui god struct.
 	GetInitialKeybindingsWithCustomCommands() ([]*Binding, []*gocui.ViewMouseBinding)
@@ -209,6 +213,11 @@ type CreateMenuOptions struct {
 	ColumnAlignment            []utils.Alignment
 	AllowFilteringKeybindings  bool
 	KeepConflictingKeybindings bool // if true, the keybindings that match essential bindings such as confirm or return will not be removed from menu items
+	// if true, the menu has a filter row of its own and filters its items as the
+	// user types, instead of being filtered through the search prompt. Only for
+	// menus whose items don't have keybindings of their own, because those keys
+	// would clash with typing.
+	FilterAsYouType bool
 }
 
 type CreatePopupPanelOpts struct {

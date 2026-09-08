@@ -41,6 +41,53 @@ func (self *ViewDriver) Title(expected *TextMatcher) *ViewDriver {
 	return self
 }
 
+// asserts that the view has the expected footer, i.e. the "x of y" text on its
+// bottom border
+func (self *ViewDriver) Footer(expected *TextMatcher) *ViewDriver {
+	self.t.assertWithRetries(func() (bool, string) {
+		actual := self.getView().Footer
+		return expected.context(fmt.Sprintf("%s footer", self.context)).test(actual)
+	})
+
+	return self
+}
+
+// asserts that the view has the expected subtitle
+func (self *ViewDriver) Subtitle(expected *TextMatcher) *ViewDriver {
+	self.t.assertWithRetries(func() (bool, string) {
+		actual := self.getView().Subtitle
+		return expected.context(fmt.Sprintf("%s subtitle", self.context)).test(actual)
+	})
+
+	return self
+}
+
+// asserts that the view hangs off the bottom of the given one, sharing a border
+// with it
+func (self *ViewDriver) SharesTopBorderWithBottomOf(upper *ViewDriver) *ViewDriver {
+	self.t.assertWithRetries(func() (bool, string) {
+		_, _, _, upperY1 := upper.getView().Dimensions()
+		_, y0, _, _ := self.getView().Dimensions()
+		return y0 == upperY1, fmt.Sprintf(
+			"%s: Expected view to start on row %d, where the view above it ends, but it starts on row %d",
+			self.context, upperY1, y0)
+	})
+
+	return self
+}
+
+// asserts that the view starts on the row below the given one
+func (self *ViewDriver) IsImmediatelyBelow(upper *ViewDriver) *ViewDriver {
+	self.t.assertWithRetries(func() (bool, string) {
+		_, _, _, upperY1 := upper.getView().Dimensions()
+		_, y0, _, _ := self.getView().Dimensions()
+		return y0 == upperY1+1, fmt.Sprintf(
+			"%s: Expected view to start on row %d, but it starts on row %d", self.context, upperY1+1, y0)
+	})
+
+	return self
+}
+
 func (self *ViewDriver) Clear() *ViewDriver {
 	// clearing multiple times in case there's multiple lines
 	//  (the clear button only clears a single line at a time)
@@ -313,6 +360,42 @@ func (self *ViewDriver) Content(matcher *TextMatcher) *ViewDriver {
 	return self
 }
 
+// SelectionIsActive asserts that the view draws its selection as the one the user
+// is working in. These three assertions read the highlight flags rather than the
+// selected lines, which say nothing about whether the selection is drawn at all.
+func (self *ViewDriver) SelectionIsActive() *ViewDriver {
+	self.t.assertWithRetries(func() (bool, string) {
+		view := self.getView()
+		ok := view.Highlight && !view.HighlightInactive
+		return ok, fmt.Sprintf("%s: expected an active selection to be shown, but it wasn't", self.context)
+	})
+
+	return self
+}
+
+// SelectionIsInactive asserts that the view draws its selection dimmed, as a panel
+// does while the focus is somewhere else.
+func (self *ViewDriver) SelectionIsInactive() *ViewDriver {
+	self.t.assertWithRetries(func() (bool, string) {
+		view := self.getView()
+		ok := view.Highlight && view.HighlightInactive
+		return ok, fmt.Sprintf("%s: expected an inactive selection to be shown, but it wasn't", self.context)
+	})
+
+	return self
+}
+
+// SelectionIsHidden asserts that the view draws no selection at all, e.g. a list
+// with nothing in it, where there is nothing to select.
+func (self *ViewDriver) SelectionIsHidden() *ViewDriver {
+	self.t.assertWithRetries(func() (bool, string) {
+		ok := !self.getView().Highlight
+		return ok, fmt.Sprintf("%s: expected no selection to be shown, but one was", self.context)
+	})
+
+	return self
+}
+
 // asserts on the selected line of the view. If you are selecting a range,
 // you should use the SelectedLines method instead.
 func (self *ViewDriver) SelectedLine(matcher *TextMatcher) *ViewDriver {
@@ -350,6 +433,31 @@ func (self *ViewDriver) SelectedLineIdxAtLeast(expected int) *ViewDriver {
 			actual = self.getView().SelectedLineIdx()
 		})
 		return actual >= expected, fmt.Sprintf("%s: Expected selected line index to be at least %d, got %d", self.context, expected, actual)
+	})
+
+	return self
+}
+
+// asserts on the scroll position of the view, i.e. the index of the line that
+// is shown at the top of the view.
+func (self *ViewDriver) OriginY(expected int) *ViewDriver {
+	self.t.assertWithRetries(func() (bool, string) {
+		actual := self.getView().OriginY()
+		return expected == actual, fmt.Sprintf("%s: Expected origin Y to be %d, got %d", self.context, expected, actual)
+	})
+
+	return self
+}
+
+// asserts that the selected line is inside the visible area of the view
+func (self *ViewDriver) SelectedLineIsVisible() *ViewDriver {
+	self.t.assertWithRetries(func() (bool, string) {
+		view := self.getView()
+		firstVisible, lastVisible := view.OriginY(), view.OriginY()+view.InnerHeight()-1
+		actual := view.SelectedLineIdx()
+		return actual >= firstVisible && actual <= lastVisible,
+			fmt.Sprintf("%s: Expected the selected line (%d) to be visible, but only lines %d to %d are",
+				self.context, actual, firstVisible, lastVisible)
 	})
 
 	return self
@@ -492,7 +600,7 @@ func (self *ViewDriver) PressRapidly(keys ...config.Keybinding) *ViewDriver {
 }
 
 func (self *ViewDriver) Click(x, y int) *ViewDriver {
-	offsetX, offsetY, _, _ := self.getView().Dimensions()
+	offsetX, offsetY, _ := self.viewGeometry()
 
 	self.t.click(offsetX+1+x, offsetY+1+y)
 
@@ -500,7 +608,7 @@ func (self *ViewDriver) Click(x, y int) *ViewDriver {
 }
 
 func (self *ViewDriver) FocusInAndClick(x, y int) *ViewDriver {
-	offsetX, offsetY, _, _ := self.getView().Dimensions()
+	offsetX, offsetY, _ := self.viewGeometry()
 
 	self.t.focusInAndClick(offsetX+1+x, offsetY+1+y)
 
@@ -508,7 +616,7 @@ func (self *ViewDriver) FocusInAndClick(x, y int) *ViewDriver {
 }
 
 func (self *ViewDriver) MouseMoveToView(target *ViewDriver, x, y int) *ViewDriver {
-	offsetX, offsetY, _, _ := target.getView().Dimensions()
+	offsetX, offsetY, _ := target.viewGeometry()
 	self.t.mouseMove(offsetX+1+x, offsetY+1+y)
 	return self
 }
@@ -518,19 +626,40 @@ func (self *ViewDriver) Drag(fromX, fromY, toX, toY int) *ViewDriver {
 }
 
 func (self *ViewDriver) ClickAndHold(x, y int) *ViewDriver {
-	offsetX, offsetY, _, _ := self.getView().Dimensions()
+	offsetX, offsetY, _ := self.viewGeometry()
 	self.t.clickAndHold(offsetX+1+x, offsetY+1+y)
 	return self
 }
 
 func (self *ViewDriver) MouseMove(x, y int) *ViewDriver {
-	offsetX, offsetY, _, _ := self.getView().Dimensions()
+	offsetX, offsetY, _ := self.viewGeometry()
 	self.t.mouseMove(offsetX+1+x, offsetY+1+y)
 	return self
 }
 
 func (self *ViewDriver) MouseMoveToBottom(x int) *ViewDriver {
-	return self.MouseMove(x, self.getView().InnerHeight()-1)
+	offsetX, offsetY, innerHeight := self.viewGeometry()
+	self.t.mouseMove(offsetX+1+x, offsetY+innerHeight)
+	return self
+}
+
+// scrolls the view down by one notch of the mouse wheel, i.e. by
+// gui.scrollHeight lines. This moves the scroll position without moving the
+// selection.
+func (self *ViewDriver) ScrollWheelDown() *ViewDriver {
+	offsetX, offsetY, _ := self.viewGeometry()
+	self.t.scrollWheelDown(offsetX+1, offsetY+1)
+	return self
+}
+
+func (self *ViewDriver) viewGeometry() (offsetX int, offsetY int, innerHeight int) {
+	self.t.gui.OnUIThreadAndWait(func() {
+		view := self.getView()
+		offsetX, offsetY, _, _ = view.Dimensions()
+		innerHeight = view.InnerHeight()
+	})
+
+	return offsetX, offsetY, innerHeight
 }
 
 func (self *ViewDriver) RepeatMouseMove() *ViewDriver {
