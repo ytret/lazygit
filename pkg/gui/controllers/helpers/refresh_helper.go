@@ -441,7 +441,8 @@ func (self *RefreshHelper) performRefresh(options types.RefreshOptions, calledFr
 		}
 		fileWg.Add(1)
 		refresh("files", func() {
-			_ = self.refreshFilesAndSubmodules(capturedFiles, loadedWorktrees, scopeSet.Includes(types.WORKTREES), waitForWorktrees, env)
+			waitForWorktrees()
+			_ = self.refreshFilesAndSubmodules(capturedFiles, loadedWorktrees, scopeSet.Includes(types.WORKTREES), env)
 			fileWg.Done()
 		})
 	}
@@ -1228,16 +1229,12 @@ func (self *RefreshHelper) refreshBranches(captured capturedBranchState, waitFor
 	return branches
 }
 
-func (self *RefreshHelper) refreshFilesAndSubmodules(captured capturedFilesState, loadedWorktrees []*models.Worktree, worktreesRefreshing bool, waitForWorktrees func(), env refreshEnv) error {
+func (self *RefreshHelper) refreshFilesAndSubmodules(captured capturedFilesState, loadedWorktrees []*models.Worktree, worktreesRefreshing bool, env refreshEnv) error {
 	configs, err := self.refreshStateSubmoduleConfigs(env)
 	if err != nil {
 		return err
 	}
 
-	// Wait for the worktrees refresh (when it is part of this refresh) so the
-	// files can be marked against fresh worktrees before the nested-repo filter
-	// runs; otherwise use the worktrees captured from the model.
-	waitForWorktrees()
 	worktrees := loadedWorktrees
 	if !worktreesRefreshing {
 		worktrees = captured.worktrees
