@@ -160,15 +160,6 @@ func (gui *Gui) createAllViews() error {
 
 	gui.Views.Snake.FgColor = gocui.ColorGreen
 
-	// The main views show diffs, whose own colors say what each line is: which side of
-	// the diff it's on, and often its syntax highlighting too. A selection painted
-	// across the whole line takes those colors over, which for a whole selected hunk
-	// leaves one unreadable block; so mark the selection with a narrow bar at the left
-	// edge instead, and leave the rest of the line to the diff. Two columns, enough to
-	// read as a marker rather than as an artefact.
-	gui.Views.Main.SelectedLineColorWidth = 2
-	gui.Views.Secondary.SelectedLineColorWidth = 2
-
 	// A tick, for the lines of a commit's diff that are in the custom patch being
 	// built. A plus would collide with a diff's own plus column.
 	gui.Views.Main.InclusionGutterMarker = "✓"
@@ -184,6 +175,16 @@ func (gui *Gui) createAllViews() error {
 // corner.
 func frameRunesWithTopCorners(frameRunes []rune, topLeft rune, topRight rune) []rune {
 	return []rune{frameRunes[0], frameRunes[1], topLeft, topRight, frameRunes[4], frameRunes[5]}
+}
+
+func (gui *Gui) configureDiffSelection() {
+	width := 0
+	if !gui.c.UserConfig().Gui.UseFullLineDiffSelection {
+		width = 2
+	}
+	for _, view := range []*gocui.View{gui.Views.Main, gui.Views.Secondary} {
+		view.SelectedLineColorWidth = width
+	}
 }
 
 func (gui *Gui) configureViewProperties() {
@@ -245,6 +246,8 @@ func (gui *Gui) configureViewProperties() {
 		view.CanScrollPastBottom = gui.c.UserConfig().Gui.ScrollPastBottom
 		view.TabWidth = gui.c.UserConfig().Gui.TabWidth
 	}
+
+	gui.configureDiffSelection()
 
 	gui.Views.CommitDescription.FgColor = theme.GocuiDefaultTextColor
 	gui.Views.CommitDescription.TextArea.AutoWrap = gui.c.UserConfig().Git.Commit.AutoWrapCommitMessage

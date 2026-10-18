@@ -684,6 +684,11 @@
           "description": "If true, hunk selection mode will be enabled by default when focusing a diff.",
           "default": true
         },
+        "useFullLineDiffSelection": {
+          "type": "boolean",
+          "description": "If true, highlight selected diff lines across their full width. If false, show narrow selection bars at the left and right edges, preserving the diff's colors between them.",
+          "default": true
+        },
         "language": {
           "type": "string",
           "enum": [

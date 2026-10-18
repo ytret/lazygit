@@ -152,6 +152,11 @@ gui:
   # If true, hunk selection mode will be enabled by default when focusing a diff.
   useHunkModeInDiffView: true
 
+  # If true, highlight selected diff lines across their full width. If false, show
+  # narrow selection bars at the left and right edges, preserving the diff's
+  # colors between them.
+  useFullLineDiffSelection: true
+
   # One of 'auto' (default) | 'en' | 'zh-CN' | 'zh-TW' | 'pl' | 'nl' | 'ja' | 'ko'
   # | 'ru' | 'pt'
   language: auto
